@@ -1,69 +1,82 @@
+import os
 import socket
 import threading
- 
-# Endereço IP e porta para o servidor
-host = '10.113.60.230'  # Endereço IP do servidor
-porta = 12345  # Porta do servidor
- 
+
+hostServidor = '10.113.60.230'
+host = '10.113.60.210' 
+porta = 12346  # PORTA QUE O CLIENTE VAI OUVIR
+portaDestino = 12345 # PORTA QUE O SERVIDOR ESTÁ OUVINDO
+
+contatos = []
+
 # Cria um objeto socket UDP
 socket_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
- 
+
 # Liga o socket ao endereço e porta especificados
 socket_server.bind((host, porta))
 
-# Tamanho máximo de dados a serem recebidos de uma vez
-tamanho_maximo = 1024
-
-# Lista para armazenar pares de nome e IP
-participantes = []
-
-# Variável para controlar a execução do programa
-executando = True
-
 print(f"Servidor UDP aguardando mensagens em {host}:{porta}")
 
-# Função para remover um participante da lista pelo nome
-def remover_participante(nome):
-    for participante in participantes:
-        if participante[0] == nome:
-            participantes.remove(participante)
-            print(f"{nome} saiu da sala")
 
-# Função para responder aos contatos com a lista de participantes
-def responder_contatos(endereco):
-    lista_contatos = ""
-    for nome, ip in participantes:
-        lista_contatos = lista_contatos+(f"{nome},{ip}\n")
-    #print(lista_contatos)
-    #Divide a lista em pedaços para enviar
-    pedacos = [lista_contatos[i:i + tamanho_maximo] for i in range(0, len(lista_contatos), tamanho_maximo)]    
-    # Envia cada pedaço
-    for pedaco in pedacos:
-        socket_server.sendto(pedaco.encode('utf-8'), (endereco[0], porta))
+def limparTela():
+    if os.name == 'posix':
+        os.system('clear')
+    elif os.name == 'nt':
+        os.system('cls')
 
-# Função para receber mensagens
+
+def obterContatoPorCampo(nomeCampo, valorCampo):
+    global contatos
+
+    contatoEncontrado = None
+
+    for contato in contatos:
+        if (contato[nomeCampo] == valorCampo):
+            contatoEncontrado = contato
+            break
+
+    return contatoEncontrado
+
+
 def receber_mensagens():
-    while executando:
+    global contatos
+
+    while True:
         try:
             # Recebe os dados e o endereço do remetente
-            dados, endereco = socket_server.recvfrom(tamanho_maximo)  # Tamanho do buffer é 1024 bytes
+            dados, endereco = socket_server.recvfrom(
+                1024)  # Tamanho do buffer é 1024 bytes
 
             mensagem = dados.decode('utf-8')
-            if mensagem.startswith(".entrar "):
-                nome = mensagem[8:]  # Extrai o nome da mensagem
-                participantes.append((nome, endereco[0]))  # Adiciona o par (nome, IP) à lista
-                print(nome+" adicionado na lista.")
-                lista_contatos = "\n".join([f"{nome},{ip}" for nome, ip in participantes])
-                print(lista_contatos)
-            elif mensagem.startswith(".sair "):
-                nome = mensagem[6:]  # Extrai o nome da mensagem
-                remover_participante(nome)
-            elif mensagem == ".contatos":
-                responder_contatos(endereco)
-            print(f"Recebido de {endereco[0]}:{endereco[1]}: {mensagem}")
+
+            if (endereco[0] == hostServidor and endereco[1] == 12345):
+                contatos = []
+
+                linhas = mensagem.split("\n")
+
+                for linha in linhas:
+                    if (linha):
+                        nome, ip = linha.split(",")
+                        contatos.append({"nome": nome, "ip": ip})
+
+                limparTela()
+
+                print('\nLista de contatos atualizada!\n')
+
+                for contato in contatos:
+                    print(f"IP: {contato['ip']}, Nome: {contato['nome']}")
+            else:
+                contatoEncontrado = obterContatoPorCampo('ip', endereco[0])
+
+                if (contatoEncontrado is not None):
+                    print(f"{contatoEncontrado['nome']} disse: {mensagem}")
+                else:
+                    print(f"{endereco[0]} disse: {mensagem}")
 
         except UnicodeDecodeError:
-            print(f"Recebido de {endereco[0]}:{endereco[1]}: Erro de decodificação (não UTF-8)")
+            print(
+                f"Recebido de {endereco[0]}:{endereco[1]}: Erro de decodificação (não UTF-8)")
+
 
 # Inicializa uma thread para receber mensagens
 thread_recebimento = threading.Thread(target=receber_mensagens)
@@ -71,42 +84,44 @@ thread_recebimento.daemon = True
 thread_recebimento.start()
 
 # Função para enviar mensagens
+
+
 def enviar_mensagens():
     cliente_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    global executando
-    destino_ip = input("Digite o endereço IP de destino: ")
-    if destino_ip=="":
-        destino_ip=host
-    while executando:
-        mensagem = input("\n"+"Digite a mensagem a ser enviada: ")
-        if mensagem.startswith("."):
-            comando = mensagem[1:]
-            if comando.startswith("destino"):
-                destino_ip = input("Digite o endereço IP de destino: ")
-            elif "_" in comando:
-                nome_do_contato, mensagem = comando.split("_", 1)
-                for nome, ip in participantes:
-                    if nome == nome_do_contato:
-                        cliente_socket.sendto(mensagem.encode('utf-8'), (ip, porta))
-                        break
-                else:
-                    print(f"Contato {nome_do_contato} não encontrado.")
-            elif comando == "parar":
-                print("Encerrando o programa...")
-                print("Fechando portas de escuta:")
-                executando = False
-                cliente_socket.sendto(mensagem.encode('utf-8'), (host, porta))
+
+    while True:
+        destino_ip = input("\nDigite o endereço IP de destino: ")
+        mensagem = input("Digite a mensagem a ser enviada: ")
+
+        if mensagem == "/sair":
+            print("Encerrando o programa...")
+            print("Fechando portas de escuta:")
+            thread_recebimento.join()
+            break
+        elif mensagem.startswith(".") and not '.contatos' in mensagem and not '.entrar' in mensagem:
+            destinatario = obterContatoPorCampo(
+                'nome', mensagem.split()[0].replace('.', ''))
+
+            if (destinatario == None):
+                print('Contato não encontrado')
+            else:
+                separator = ' '
+
+                mensagemParaEnviar = separator.join(mensagem.split()[1:])
+
+                cliente_socket.sendto(mensagemParaEnviar.encode(
+                    'utf-8'), (destinatario['ip'], portaDestino))
         else:
-            cliente_socket.sendto(mensagem.encode('utf-8'), (destino_ip, porta))
+            cliente_socket.sendto(mensagem.encode(
+                'utf-8'), (destino_ip, portaDestino))
+
 
 # Inicializa uma thread para enviar mensagens
 thread_envio = threading.Thread(target=enviar_mensagens)
 thread_envio.start()
 
 # Aguarda as threads finalizarem
-thread_recebimento.join()
 thread_envio.join()
-
 print("Threads encerradas.")
 # Feche o socket (isso nunca será executado no loop acima)
 socket_server.close()
